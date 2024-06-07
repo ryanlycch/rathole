@@ -3,10 +3,9 @@ remote_addr = "127.0.0.1:2333"
 default_token = "default_token_if_not_specify" 
 
 [client.transport]
-type = "tls" 
-[client.transport.tls]
-trusted_root = "examples/tls/rootCA.crt"
-hostname = "localhost"
+type = "websocket" 
+[client.transport.websocket] 
+tls = false
 
 [client.services.echo] 
 local_addr = "127.0.0.1:8080" 
@@ -18,10 +17,9 @@ bind_addr = "0.0.0.0:2333"
 default_token = "default_token_if_not_specify" 
 
 [server.transport]
-type = "tls" 
-[server.transport.tls]
-pkcs12 = "examples/tls/identity.pfx"
-pkcs12_password = "1234"
+type = "websocket" 
+[server.transport.websocket] 
+tls = false
 
 [server.services.echo] 
 bind_addr = "0.0.0.0:2334" 

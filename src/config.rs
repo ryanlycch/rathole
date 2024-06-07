@@ -13,6 +13,9 @@ use crate::transport::{DEFAULT_KEEPALIVE_INTERVAL, DEFAULT_KEEPALIVE_SECS, DEFAU
 const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 30;
 const DEFAULT_HEARTBEAT_TIMEOUT_SECS: u64 = 40;
 
+/// Client
+const DEFAULT_CLIENT_RETRY_INTERVAL_SECS: u64 = 1;
+
 /// String with Debug implementation that emits "MASKED"
 /// Used to mask sensitive strings when logging
 #[derive(Serialize, Deserialize, Default, PartialEq, Eq, Clone)]
@@ -37,22 +40,21 @@ impl From<&str> for MaskedString {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Default)]
 pub enum TransportType {
+    #[default]
     #[serde(rename = "tcp")]
     Tcp,
     #[serde(rename = "tls")]
     Tls,
     #[serde(rename = "noise")]
     Noise,
+    #[serde(rename = "websocket")]
+    Websocket,
 }
 
-impl Default for TransportType {
-    fn default() -> TransportType {
-        TransportType::Tcp
-    }
-}
-
+/// Per service config
+/// All Option are optional in configuration but must be Some value in runtime
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ClientServiceConfig {
@@ -63,6 +65,7 @@ pub struct ClientServiceConfig {
     pub local_addr: String,
     pub token: Option<MaskedString>,
     pub nodelay: Option<bool>,
+    pub retry_interval: Option<u64>,
 }
 
 impl ClientServiceConfig {
@@ -74,24 +77,21 @@ impl ClientServiceConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ServiceType {
     #[serde(rename = "tcp")]
+    #[default]
     Tcp,
     #[serde(rename = "udp")]
     Udp,
-}
-
-impl Default for ServiceType {
-    fn default() -> Self {
-        ServiceType::Tcp
-    }
 }
 
 fn default_service_type() -> ServiceType {
     Default::default()
 }
 
+/// Per service config
+/// All Option are optional in configuration but must be Some value in runtime
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ServerServiceConfig {
@@ -133,6 +133,12 @@ pub struct NoiseConfig {
     pub local_private_key: Option<MaskedString>,
     pub remote_public_key: Option<String>,
     // TODO: Maybe psk can be added
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WebsocketConfig {
+    pub tls: bool,
 }
 
 fn default_nodelay() -> bool {
@@ -179,10 +185,15 @@ pub struct TransportConfig {
     pub tcp: TcpConfig,
     pub tls: Option<TlsConfig>,
     pub noise: Option<NoiseConfig>,
+    pub websocket: Option<WebsocketConfig>,
 }
 
 fn default_heartbeat_timeout() -> u64 {
     DEFAULT_HEARTBEAT_TIMEOUT_SECS
+}
+
+fn default_client_retry_interval() -> u64 {
+    DEFAULT_CLIENT_RETRY_INTERVAL_SECS
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone)]
@@ -195,6 +206,8 @@ pub struct ClientConfig {
     pub transport: TransportConfig,
     #[serde(default = "default_heartbeat_timeout")]
     pub heartbeat_timeout: u64,
+    #[serde(default = "default_client_retry_interval")]
+    pub retry_interval: u64,
 }
 
 fn default_heartbeat_interval() -> u64 {
@@ -266,6 +279,9 @@ impl Config {
                     bail!("The token of service {} is not set", name);
                 }
             }
+            if s.retry_interval.is_none() {
+                s.retry_interval = Some(client.retry_interval);
+            }
         }
 
         Config::validate_transport_config(&client.transport, false)?;
@@ -303,6 +319,7 @@ impl Config {
                 // The check is done in transport
                 Ok(())
             }
+            TransportType::Websocket => Ok(()),
         }
     }
 

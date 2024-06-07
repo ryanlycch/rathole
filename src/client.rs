@@ -8,8 +8,9 @@ use crate::protocol::{
 };
 use crate::transport::{AddrMaybeCached, SocketOpts, TcpTransport, Transport};
 use anyhow::{anyhow, bail, Context, Result};
+use backoff::backoff::Backoff;
+use backoff::future::retry_notify;
 use backoff::ExponentialBackoff;
-use backoff::{backoff::Backoff, future::retry_notify};
 use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -22,8 +23,10 @@ use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
 
 #[cfg(feature = "noise")]
 use crate::transport::NoiseTransport;
-#[cfg(feature = "tls")]
+#[cfg(any(feature = "native-tls", feature = "rustls"))]
 use crate::transport::TlsTransport;
+#[cfg(any(feature = "websocket-native-tls", feature = "websocket-rustls"))]
+use crate::transport::WebsocketTransport;
 
 use crate::constants::{run_control_chan_backoff, UDP_BUFFER_SIZE, UDP_SENDQ_SIZE, UDP_TIMEOUT};
 
@@ -45,13 +48,13 @@ pub async fn run_client(
             client.run(shutdown_rx, update_rx).await
         }
         TransportType::Tls => {
-            #[cfg(feature = "tls")]
+            #[cfg(any(feature = "native-tls", feature = "rustls"))]
             {
                 let mut client = Client::<TlsTransport>::from(config).await?;
                 client.run(shutdown_rx, update_rx).await
             }
-            #[cfg(not(feature = "tls"))]
-            crate::helper::feature_not_compile("tls")
+            #[cfg(not(any(feature = "native-tls", feature = "rustls")))]
+            crate::helper::feature_neither_compile("native-tls", "rustls")
         }
         TransportType::Noise => {
             #[cfg(feature = "noise")]
@@ -61,6 +64,15 @@ pub async fn run_client(
             }
             #[cfg(not(feature = "noise"))]
             crate::helper::feature_not_compile("noise")
+        }
+        TransportType::Websocket => {
+            #[cfg(any(feature = "websocket-native-tls", feature = "websocket-rustls"))]
+            {
+                let mut client = Client::<WebsocketTransport>::from(config).await?;
+                client.run(shutdown_rx, update_rx).await
+            }
+            #[cfg(not(any(feature = "websocket-native-tls", feature = "websocket-rustls")))]
+            crate::helper::feature_neither_compile("websocket-native-tls", "websocket-rustls")
         }
     }
 }
@@ -494,6 +506,9 @@ impl ControlChannelHandle {
 
         info!("Starting {}", hex::encode(digest));
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+        let mut retry_backoff = run_control_chan_backoff(service.retry_interval.unwrap());
+
         let mut s = ControlChannel {
             digest,
             service,
@@ -505,7 +520,6 @@ impl ControlChannelHandle {
 
         tokio::spawn(
             async move {
-                let mut backoff = run_control_chan_backoff();
                 let mut start = Instant::now();
 
                 while let Err(err) = s
@@ -519,10 +533,10 @@ impl ControlChannelHandle {
 
                     if start.elapsed() > Duration::from_secs(3) {
                         // The client runs for at least 3 secs and then disconnects
-                        // Retry immediately
-                        backoff.reset();
-                        error!("{:#}. Retry...", err);
-                    } else if let Some(duration) = backoff.next_backoff() {
+                        retry_backoff.reset();
+                    }
+
+                    if let Some(duration) = retry_backoff.next_backoff() {
                         error!("{:#}. Retry in {:?}...", err, duration);
                         time::sleep(duration).await;
                     } else {

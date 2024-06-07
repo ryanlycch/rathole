@@ -4,7 +4,7 @@
 
 [![GitHub stars](https://img.shields.io/github/stars/rapiz1/rathole)](https://github.com/rapiz1/rathole/stargazers)
 [![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/rapiz1/rathole)](https://github.com/rapiz1/rathole/releases)
-![GitHub Workflow Status (branch)](https://img.shields.io/github/workflow/status/rapiz1/rathole/Rust/main)
+![GitHub Workflow Status (branch)](https://img.shields.io/github/actions/workflow/status/rapiz1/rathole/rust.yml?branch=main)
 [![GitHub all releases](https://img.shields.io/github/downloads/rapiz1/rathole/total)](https://github.com/rapiz1/rathole/releases)
 [![Docker Pulls](https://img.shields.io/docker/pulls/rapiz1/rathole)](https://hub.docker.com/r/rapiz1/rathole)
 [![Join the chat at https://gitter.im/rapiz1/rathole](https://badges.gitter.im/rapiz1/rathole.svg)](https://gitter.im/rapiz1/rathole?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
@@ -17,19 +17,21 @@ rathole, like [frp](https://github.com/fatedier/frp) and [ngrok](https://github.
 
 <!-- TOC -->
 
-- [Features](#features)
-- [Quickstart](#quickstart)
-- [Configuration](#configuration)
-  - [Logging](#logging)
-- [Benchmark](#benchmark)
-- [Development Status](#development-status)
+- [rathole](#rathole)
+  - [Features](#features)
+  - [Quickstart](#quickstart)
+  - [Configuration](#configuration)
+    - [Logging](#logging)
+    - [Tuning](#tuning)
+  - [Benchmark](#benchmark)
+  - [Planning](#planning)
 
 <!-- /TOC -->
 
 ## Features
 
-- **High Performance** Much higher throughput can be achieved than frp, and more stable when handling a large volume of connections. See [Benchmark](#Benchmark)
-- **Low Resource Consumption** Consumes much fewer memory than similar tools. See [Benchmark](#Benchmark). [The binary can be](docs/build-guide.md) **as small as ~500KiB** to fit the constraints of devices, like embedded devices as routers.
+- **High Performance** Much higher throughput can be achieved than frp, and more stable when handling a large volume of connections. See [Benchmark](#benchmark)
+- **Low Resource Consumption** Consumes much fewer memory than similar tools. See [Benchmark](#benchmark). [The binary can be](docs/build-guide.md) **as small as ~500KiB** to fit the constraints of devices, like embedded devices as routers.
 - **Security** Tokens of services are mandatory and service-wise. The server and clients are responsible for their own configs. With the optional Noise Protocol, encryption can be configured at ease. No need to create a self-signed certificate! TLS is also supported.
 - **Hot Reload** Services can be added or removed dynamically by hot-reloading the configuration file. HTTP API is WIP.
 
@@ -53,7 +55,7 @@ Create `server.toml` with the following content and accommodate it to your needs
 bind_addr = "0.0.0.0:2333" # `2333` specifies the port that rathole listens for clients
 
 [server.services.my_nas_ssh]
-token = "use_a_secret_that_only_you_know" # Token that is used to authenticate the client for the service. Change to a arbitrary value.
+token = "use_a_secret_that_only_you_know" # Token that is used to authenticate the client for the service. Change to an arbitrary value.
 bind_addr = "0.0.0.0:5202" # `5202` specifies the port that exposes `my_nas_ssh` to the Internet
 ```
 
@@ -91,7 +93,7 @@ To run `rathole` run as a background service on Linux, checkout the [systemd exa
 
 ## Configuration
 
-`rathole` can automatically determine to run in the server mode or the client mode, according to the content of the configuration file, if only one of `[server]` and `[client]` block is present, like the example in [Quickstart](#Quickstart).
+`rathole` can automatically determine to run in the server mode or the client mode, according to the content of the configuration file, if only one of `[server]` and `[client]` block is present, like the example in [Quickstart](#quickstart).
 
 But the `[client]` and `[server]` block can also be put in one file. Then on the server side, run `rathole --server config.toml` and on the client side, run `rathole --client config.toml` to explicitly tell `rathole` the running mode.
 
@@ -106,13 +108,14 @@ Here is the full configuration specification:
 remote_addr = "example.com:2333" # Necessary. The address of the server
 default_token = "default_token_if_not_specify" # Optional. The default token of services, if they don't define their own ones
 heartbeat_timeout = 40 # Optional. Set to 0 to disable the application-layer heartbeat test. The value must be greater than `server.heartbeat_interval`. Default: 40 seconds
+retry_interval = 1 # Optional. The interval between retry to connect to the server. Default: 1 second
 
 [client.transport] # The whole block is optional. Specify which transport to use
 type = "tcp" # Optional. Possible values: ["tcp", "tls", "noise"]. Default: "tcp"
 
 [client.transport.tcp] # Optional. Also affects `noise` and `tls`
 proxy = "socks5://user:passwd@127.0.0.1:1080" # Optional. The proxy used to connect to the server. `http` and `socks5` is supported.
-nodelay = false # Optional. Determine whether to enable TCP_NODELAY, if applicable, to improve the latency but decrease the bandwidth. Default: false
+nodelay = true # Optional. Determine whether to enable TCP_NODELAY, if applicable, to improve the latency but decrease the bandwidth. Default: true
 keepalive_secs = 20 # Optional. Specify `tcp_keepalive_time` in `tcp(7)`, if applicable. Default: 20 seconds
 keepalive_interval = 8 # Optional. Specify `tcp_keepalive_intvl` in `tcp(7)`, if applicable. Default: 8 seconds
 
@@ -125,11 +128,15 @@ pattern = "Noise_NK_25519_ChaChaPoly_BLAKE2s" # Optional. Default value as shown
 local_private_key = "key_encoded_in_base64" # Optional
 remote_public_key = "key_encoded_in_base64" # Optional
 
+[client.transport.websocket] # Necessary if `type` is "websocket"
+tls = true # If `true` then it will use settings in `client.transport.tls`
+
 [client.services.service1] # A service that needs forwarding. The name `service1` can change arbitrarily, as long as identical to the name in the server's configuration
 type = "tcp" # Optional. The protocol that needs forwarding. Possible values: ["tcp", "udp"]. Default: "tcp"
 token = "whatever" # Necessary if `client.default_token` not set
 local_addr = "127.0.0.1:1081" # Necessary. The address of the service that needs to be forwarded
-nodelay = false # Optional. Determine whether to enable TCP_NODELAY for data transmission, if applicable, to improve the latency but decrease the bandwidth. Default: false
+nodelay = true # Optional. Override the `client.transport.nodelay` per service
+retry_interval = 1 # Optional. The interval between retry to connect to the server. Default: inherits the global config
 
 [client.services.service2] # Multiple services can be defined
 local_addr = "127.0.0.1:1082"
@@ -143,7 +150,7 @@ heartbeat_interval = 30 # Optional. The interval between two application-layer h
 type = "tcp"
 
 [server.transport.tcp] # Same as the client
-nodelay = false
+nodelay = true
 keepalive_secs = 20
 keepalive_interval = 8
 
@@ -156,11 +163,14 @@ pattern = "Noise_NK_25519_ChaChaPoly_BLAKE2s"
 local_private_key = "key_encoded_in_base64"
 remote_public_key = "key_encoded_in_base64"
 
+[server.transport.websocket] # Necessary if `type` is "websocket"
+tls = true # If `true` then it will use settings in `server.transport.tls`
+
 [server.services.service1] # The service name must be identical to the client side
 type = "tcp" # Optional. Same as the client `[client.services.X.type]
 token = "whatever" # Necessary if `server.default_token` not set
 bind_addr = "0.0.0.0:8081" # Necessary. The address of the service is exposed at. Generally only the port needs to be change.
-nodelay = false # Optional. Same as the client
+nodelay = true # Optional. Same as the client
 
 [server.services.service2]
 bind_addr = "0.0.0.1:8082"
@@ -178,6 +188,12 @@ will run `rathole` with only error level logging.
 
 If `RUST_LOG` is not present, the default logging level is `info`.
 
+### Tuning
+
+From v0.4.7, rathole enables TCP_NODELAY by default, which should benefit the latency and interactive applications like rdp, Minecraft servers. However, it slightly decreases the bandwidth.
+
+If the bandwidth is more important, TCP_NODELAY can be opted out with `nodelay = false`.
+
 ## Benchmark
 
 rathole has similar latency to [frp](https://github.com/fatedier/frp), but can handle a more connections, provide larger bandwidth, with less memory usage.
@@ -191,13 +207,8 @@ For more details, see the separate page [Benchmark](./docs/benchmark.md).
 ![udp_bitrate](./docs/img/udp_bitrate.svg)
 ![mem](./docs/img/mem-graph.png)
 
-## Development Status
+## Planning
 
-`rathole` is under active development. A load of features is on the way:
-
-- [x] TLS support
-- [x] UDP support
-- [x] Hot reloading
 - [ ] HTTP APIs for configuration
 
 [Out of Scope](./docs/out-of-scope.md) lists features that are not planned to be implemented and why.

@@ -1,14 +1,14 @@
-use std::net::SocketAddr;
-
-use super::{AddrMaybeCached, SocketOpts, TcpTransport, Transport};
 use crate::config::{TlsConfig, TransportConfig};
 use crate::helper::host_port_pair;
+use crate::transport::{AddrMaybeCached, SocketOpts, TcpTransport, Transport};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use std::fs;
+use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio_native_tls::native_tls::{self, Certificate, Identity};
-use tokio_native_tls::{TlsAcceptor, TlsConnector, TlsStream};
+pub(crate) use tokio_native_tls::TlsStream;
+use tokio_native_tls::{TlsAcceptor, TlsConnector};
 
 #[derive(Debug)]
 pub struct TlsTransport {
@@ -46,7 +46,7 @@ impl Transport for TlsTransport {
                 // if no trusted_root is specified, allow TlsConnector to use system default
                 let connector = native_tls::TlsConnector::builder().build()?;
                 Some(TlsConnector::from(connector))
-            },
+            }
         };
 
         let tls_acceptor = match config.pkcs12.as_ref() {
@@ -108,4 +108,9 @@ impl Transport for TlsTransport {
             )
             .await?)
     }
+}
+
+#[cfg(feature = "websocket-native-tls")]
+pub(crate) fn get_tcpstream(s: &TlsStream<TcpStream>) -> &TcpStream {
+    s.get_ref().get_ref().get_ref()
 }
